@@ -1,0 +1,218 @@
+#!/bin/sh
+#
+# Manage Rasperry Pi shield: 502V2S - Video to Surround Sound
+#
+# For details see:
+#  http://www.pi2design.com/store/p2/502V2S_-_Video_to_Surround_Sound.html
+#
+# Script to initialize the HDMI audio extractor which is based on the
+# ADV7623 chip (HDMI Transceiver) The communication with the ADV7623
+# chip is carried out via i2c.
+#
+# Dependencies:
+# * i2c-tools (http://www.lm-sensors.org/wiki/I2CTools)
+# * WiringPi  (http://wiringpi.com/)
+#
+# Installation of dependencies on debian bases systems:
+#  apt-get update
+#  apt-get install i2c-tools
+#  apt-get install git-core build-essential
+#  git clone git://git.drogon.net/wiringPi
+#  cd wiringPi
+#  ./build
+
+
+# Define wiringPI GPIO Pins for ADV7623 and PCM5102A
+# Pin details see:
+#  * 502V2S    http://www.pi2design.com/uploads/4/8/5/3/48531975/csb502v2s_hw_ref_manual_p2_1.pdf
+#  * ADV7623:  http://www.analog.com/media/en/technical-documentation/data-sheets/ADV7623.pdf
+#  * PCM5102A: http://www.ti.com/lit/ds/symlink/pcm5102a-q1.pdf
+#
+# Wiring Pi - Pin out (gpio version: 2.31)
+#
+# +-----+-----+---------+------+---+---Pi 2---+---+------+---------+-----+-----+
+# | BCM | wPi |   Name  | Mode | V | Physical | V | Mode | Name    | wPi | BCM |
+# +-----+-----+---------+------+---+----++----+---+------+---------+-----+-----+
+# |     |     |    3.3v |      |   |  1 || 2  |   |      | 5v      |     |     |
+# |   2 |   8 |   SDA.1 | ALT0 | 1 |  3 || 4  |   |      | 5V      |     |     |
+# |   3 |   9 |   SCL.1 | ALT0 | 1 |  5 || 6  |   |      | 0v      |     |     |
+# |   4 |   7 | GPIO. 7 |   IN | 1 |  7 || 8  | 1 | ALT0 | TxD     | 15  | 14  |
+# |     |     |      0v |      |   |  9 || 10 | 1 | ALT0 | RxD     | 16  | 15  |
+# |  17 |   0 | GPIO. 0 |  OUT | 0 | 11 || 12 | 1 | IN   | GPIO. 1 | 1   | 18  |
+# |  27 |   2 | GPIO. 2 |   IN | 0 | 13 || 14 |   |      | 0v      |     |     |
+# |  22 |   3 | GPIO. 3 |   IN | 0 | 15 || 16 | 1 | IN   | GPIO. 4 | 4   | 23  |
+# |     |     |    3.3v |      |   | 17 || 18 | 0 | IN   | GPIO. 5 | 5   | 24  |
+# |  10 |  12 |    MOSI |   IN | 0 | 19 || 20 |   |      | 0v      |     |     |
+# |   9 |  13 |    MISO |   IN | 0 | 21 || 22 | 0 | IN   | GPIO. 6 | 6   | 25  |
+# |  11 |  14 |    SCLK |   IN | 0 | 23 || 24 | 1 | IN   | CE0     | 10  | 8   |
+# |     |     |      0v |      |   | 25 || 26 | 1 | IN   | CE1     | 11  | 7   |
+# |   0 |  30 |   SDA.0 |   IN | 1 | 27 || 28 | 1 | IN   | SCL.0   | 31  | 1   |
+# |   5 |  21 | GPIO.21 |  OUT | 1 | 29 || 30 |   |      | 0v      |     |     |
+# |   6 |  22 | GPIO.22 |  OUT | 0 | 31 || 32 | 1 | IN   | GPIO.26 | 26  | 12  |
+# |  13 |  23 | GPIO.23 |  OUT | 0 | 33 || 34 |   |      | 0v      |     |     |
+# |  19 |  24 | GPIO.24 |   IN | 0 | 35 || 36 | 0 | IN   | GPIO.27 | 27  | 16  |
+# |  26 |  25 | GPIO.25 |   IN | 0 | 37 || 38 | 0 | IN   | GPIO.28 | 28  | 20  |
+# |     |     |      0v |      |   | 39 || 40 | 1 | OUT  | GPIO.29 | 29  | 21  |
+# +-----+-----+---------+------+---+----++----+---+------+---------+-----+-----+
+# | BCM | wPi |   Name  | Mode | V | Physical | V | Mode | Name    | wPi | BCM |
+# +-----+-----+---------+------+---+---Pi 2---+---+------+---------+-----+-----+
+
+
+ADV7623_RESET="29"
+
+PCM5102A_MUTE="21"       # Soft mute control:
+                         # Pin 17 (XSMT) on chip pcm5102a:
+                         #  * Soft mute   -> low  (0)
+                         #  * Soft unmute -> high (1)
+
+PCM5102A_DEEMPHASIS="22" # De-emphasis control for 44.1-kHz sampling rate
+                         # Pin 10 (DEMP) on chip pcm5102a:
+                         # * Off -> low  (0)
+                         # * On  -> high (1)
+
+PCM5102A_FILTER="23"     # Filter select
+                         # Pin 11 (FLT) on chip pcm5102a:
+                         #  * Normal latency -> low  (0)
+                         #  * Low latency    -> high (1)
+
+
+
+do_start () {
+    echo -n "Setting up Rasperry Pi shield: 502V2S - Video to Surround Sound..."
+
+    # reset ADV7623 chip
+    gpio write $ADV7623_RESET 1
+    gpio mode  $ADV7623_RESET out
+    sleep .1
+    gpio write $ADV7623_RESET 0
+    sleep .05
+    gpio write $ADV7623_RESET 1
+    sleep .1
+
+    # unmute audio DACs PCM5102A
+    gpio write $PCM5102A_MUTE 1
+    gpio mode  $PCM5102A_MUTE out
+    
+    # configure ADV7623
+    # from analog devices script "1-3 Port A Audio Pass Through Mode
+    # for 192KHz multi-channel PCM":
+    i2cset -y 1 0x58 0x02 0xF5 # Auto CSC, RGB out, Set op_656 bit
+    i2cset -y 1 0x58 0x05 0x28 # AV Codes Off
+    i2cset -y 1 0x58 0x0C 0x42 # Power up part and power down VDP
+    i2cset -y 1 0x58 0x15 0xAE # Disable Tristate of Audio Pins
+    i2cset -y 1 0x58 0x1F 0x20 # ADI Recommended Write
+    i2cset -y 1 0x58 0xEE 0x48 # OSD Map Address
+    i2cset -y 1 0x58 0xEF 0x70 # TX Packet Map Address
+    i2cset -y 1 0x58 0xF0 0x7E # TX EDID Map Address
+    i2cset -y 1 0x58 0xF4 0x80 # CEC Map Address
+    i2cset -y 1 0x58 0xF5 0x7C # HDMI Rx Infoframe Map Address
+    i2cset -y 1 0x58 0xF8 0x4C # DPLL Map Address
+    i2cset -y 1 0x58 0xF9 0x64 # HDMI Rx Repeater Map Address
+    i2cset -y 1 0x58 0xFA 0x6C # HDMI Rx EDID Map Address
+    i2cset -y 1 0x58 0xFB 0x68 # HDMI Rx Map Address
+    i2cset -y 1 0x58 0xFD 0x44 # CP Map Address
+    i2cset -y 1 0x34 0x00 0xF0 # Set HDMI Input Port to A (Enable BG monitoring)
+    i2cset -y 1 0x34 0x01 0x00 # Enable clock terminators
+    i2cset -y 1 0x34 0x0D 0xF4 # ADI Recommended Write
+    i2cset -y 1 0x34 0x1A 0x8A # Unmute audio       & enable new compressed audio mute mask bit
+    i2cset -y 1 0x34 0x3C 0x12 # Enable Audio Bypass mode
+    i2cset -y 1 0x34 0x3D 0x10 # ADI Recommended Write
+    i2cset -y 1 0x34 0x44 0x85 # ADI Recommended Write
+    i2cset -y 1 0x34 0x60 0x88 # ADI Recommended Write
+    i2cset -y 1 0x34 0x61 0x88 # ADI Recommended Write
+    i2cset -y 1 0x34 0x57 0xB9 # ADI Recommended Write
+    i2cset -y 1 0x34 0x58 0x63 # ADI Recommended Write
+    i2cset -y 1 0x34 0x6C 0x18 # ADI Recommended Write
+    i2cset -y 1 0x34 0x75 0x10 # ADI Recommended Write
+    i2cset -y 1 0x34 0x8A 0x2A # Set Equaliser for short cables (<10m)
+    i2cset -y 1 0x34 0x8E 0x2A # Set Equaliser for short cables (<10m)
+    i2cset -y 1 0x34 0x91 0x2A # Set Equaliser for short cables (<10m)
+    i2cset -y 1 0x34 0x94 0x2A # Set Equaliser for short cables (<10m)
+    i2cset -y 1 0x34 0x98 0xFF # ADI Recommended Write
+    i2cset -y 1 0x34 0x99 0xA1 # ADI Recommended Write
+    i2cset -y 1 0x34 0x9A 0xFF # ADI Recommended Write
+    i2cset -y 1 0x34 0x9B 0x09 # ADI Recommended Write
+    i2cset -y 1 0x34 0x9D 0x02 # ADI Recommended Write
+    i2cset -y 1 0x5C 0xD6 0x48 # OVERRIDE HPD APD
+    i2cset -y 1 0x5C 0x01 0x00 # Set N Value(24576)
+    i2cset -y 1 0x5C 0x02 0x60 # Set N Value(24576)
+    i2cset -y 1 0x5C 0x03 0x00 # Set N Value(24576)
+    i2cset -y 1 0x5C 0x15 0xE0 # 24-bit, 444 YPrPb input, Fs = 192kHz
+    i2cset -y 1 0x5C 0x16 0x60 # YPrPb 444, color depth is 12 bits
+    i2cset -y 1 0x5C 0x40 0x80 # General Control packet enable
+    i2cset -y 1 0x5C 0x41 0x10 # Power up all circuits
+    i2cset -y 1 0x5C 0x48 0x08 # Video Data right justified
+    i2cset -y 1 0x5C 0x4C 0x06 # General Control packet set to 12 bit Output
+    i2cset -y 1 0x5C 0x55 0x00 # Set RGB in AVinfoframe APD
+    i2cset -y 1 0x5C 0x57 0x04 # set RGB limited pix value range (AVI infoframe) APD
+    i2cset -y 1 0x5C 0x56 0x08 # Set active format Aspect
+    i2cset -y 1 0x5C 0x73 0x07 # Enable 8 channel output APD
+    i2cset -y 1 0x5C 0x96 0x20 # Vsync Interrupt Active
+    i2cset -y 1 0x5C 0x98 0x07 # ADI Recommended Write
+    i2cset -y 1 0x5C 0x9A 0x80 # ADI Recommended Write
+    i2cset -y 1 0x5C 0x9B 0x1A # ADI Recommended Write
+    i2cset -y 1 0x5C 0xAF 0x16 # Set HDMI Mode (DVI by default)
+    i2cset -y 1 0x5C 0xBA 0x30 # ADI Recommended Write
+    i2cset -y 1 0x5C 0xDF 0x39 # ADI Recommended Write
+    i2cset -y 1 0x24 0x00 0xB0 # Enables OSD
+    i2cset -y 1 0x24 0x10 0x00 # Disables OSD FBOX
+
+    i2cset -y 1 0x24 0x11 0x00 #
+    i2cset -y 1 0x24 0x12 0x00 #
+    i2cset -y 1 0x24 0x13 0x00 #
+    i2cset -y 1 0x24 0x80 0x00 # Disables OSD TBOX
+    i2cset -y 1 0x24 0x81 0x00 #
+    i2cset -y 1 0x24 0x82 0x00 #
+    i2cset -y 1 0x24 0x83 0x00 #
+    i2cset -y 1 0x22 0xC0 0x26 # set FreeRun color to Pi logo color (G)
+    i2cset -y 1 0x22 0xC1 0xD6 # set FreeRun color to Pi logo color (R)
+    i2cset -y 1 0x22 0xC2 0x4F # set FreeRun color to Pi logo color (B)
+    i2cset -y 1 0x22 0xBF 0x16 # enable manual FreeRun color
+    #sleep 1
+    #i2cset -y 1 0x58 0x15 0xBE # Tristate of Audio Pins
+    #sleep 1
+    #i2cset -y 1 0x58 0x15 0xAE # Disable Tristate of Audio Pins
+
+    # Setup PCM5102A: filter and de-emphasis
+    gpio write $PCM5102A_DEEMPHASIS 0    # disable de-emphasis
+    gpio mode  $PCM5102A_DEEMPHASIS out
+
+    gpio write $PCM5102A_FILTER 0        # set filter to normal latency
+    gpio mode  $PCM5102A_FILTER out
+
+    echo "done"
+}
+
+do_stop () {
+
+    echo -n "Shutting HDMI audio extraction.."
+    # Mute audio on PCM5102A
+    gpio write $PCM5102A_MUTE 0
+    # hold ADV7611 in reset
+    gpio write $ADV7623_RESET 0
+
+    echo "done"
+}
+
+case "$1" in
+    start|"")
+	do_start
+	exit 0
+	;;
+    restart)
+	do_stop
+	do_start
+	exit 0
+	;;
+    stop)
+	do_stop
+	exit 0
+	;;
+    *)
+    	echo "Usage: $0 [start|stop|restart]" >&2
+	exit 3
+	;;
+esac
+
+
+exit 0

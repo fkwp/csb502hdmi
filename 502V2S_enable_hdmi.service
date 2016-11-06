@@ -1,0 +1,14 @@
+[Unit]
+Description=Rasperry Pi shield: 502V2S - Video to Surround Sound
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/502V2S_enable_hdmi start
+# Set Alsa bcm2835 device to HDMI output
+ExecStartPost=/usr/bin/amixer cset numid=3 2
+
+ExecStop=/usr/bin/502V2S_enable_hdmi stop
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
