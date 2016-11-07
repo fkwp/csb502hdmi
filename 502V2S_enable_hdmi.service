@@ -6,6 +6,8 @@ Type=oneshot
 ExecStart=/usr/bin/502V2S_enable_hdmi start
 # Set Alsa bcm2835 device to HDMI output
 ExecStartPost=/usr/bin/amixer cset numid=3 2
+# Set Alsa bcm2835 device to 0dB
+ExecStartPost=/usr/bin/amixer cset numid=1 0
 
 ExecStop=/usr/bin/502V2S_enable_hdmi stop
 RemainAfterExit=yes
