@@ -8,17 +8,19 @@ Contains script(s) to initialize the HDMI audio extractor on the CSB502 series R
 
 ### Installation of dependencies on debian bases systems:
 ```
-# apt-get update
-# apt-get install i2c-tools
-# apt-get install git-core build-essential
-# git clone git://git.drogon.net/wiringPi
-# cd wiringPi
-# ./build
+apt-get update
+apt-get install i2c-tools
+apt-get install git-core build-essential
+git clone git://git.drogon.net/wiringPi
+cd wiringPi
+./build
+cd ..
 ```
 
 ## Installation
 
 ```
+git clone https://github.com/Pi2Design/csb502hdmi
 cd csb502hdmi
 sudo cp ./502V2S_enable_hdmi /usr/bin
 sudo cp ./502V2S_enable_hdmi.service /etc/etc/systemd/system

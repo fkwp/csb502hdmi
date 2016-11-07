@@ -26,6 +26,7 @@
 # Pin details see:
 #  * 502V2S    http://www.pi2design.com/uploads/4/8/5/3/48531975/csb502v2s_hw_ref_manual_p2_1.pdf
 #  * ADV7623:  http://www.analog.com/media/en/technical-documentation/data-sheets/ADV7623.pdf
+#              https://ez.analog.com/docs/DOC-2573
 #  * PCM5102A: http://www.ti.com/lit/ds/symlink/pcm5102a-q1.pdf
 #
 # Wiring Pi - Pin out (gpio version: 2.31)
